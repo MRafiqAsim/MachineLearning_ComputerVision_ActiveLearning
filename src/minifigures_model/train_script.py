@@ -1,4 +1,8 @@
-"""Train the EncoderDecoder model on the labeled images in ``data/data/dataset.json``.
+"""Train the EncoderDecoder model on the labeled images.
+
+Uses the frozen splits in ``data/data/datasets/{train,val}.json`` when they exist (created by
+the end-to-end notebook and extended by active-learning merges), otherwise a seeded split of
+``data/data/dataset.json``.
 
 Usage::
 
@@ -53,7 +57,14 @@ def run_training(  # noqa: PLR0913
         msg = "Label at least 10 images in Label Studio before training (see the README)."
         raise SystemExit(msg)
 
-    train_data, val_data = split_dataset(dataset, val_fraction, seed)
+    split_dir = data_dir / "datasets"
+    if (split_dir / "train.json").exists() and (split_dir / "val.json").exists():
+        # Frozen splits from the notebook / active-learning merges: keep validation comparable
+        train_data = json.loads((split_dir / "train.json").read_text())
+        val_data = json.loads((split_dir / "val.json").read_text())
+        dataset = {**train_data, **val_data}
+    else:
+        train_data, val_data = split_dataset(dataset, val_fraction, seed)
     print(f"Labeled: {len(dataset)}  train: {len(train_data)}  val: {len(val_data)}")
 
     image_dir = data_dir / "minifigures"

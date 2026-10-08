@@ -70,6 +70,25 @@ Each cycle trains the model, computes the loss on every labeled image to find th
 
 The project targets **Linux** (the pinned CPU PyTorch wheels are Linux-only). The easiest way to run it is the included **devcontainer** — open the repository in GitHub Codespaces or VS Code *Reopen in Container* — which installs everything with uv. Run `poe` to list all tasks.
 
+### The pipeline, step by step
+
+Every step is a small module in `src/` with a command to run it. The notebook [`notebooks/end_to_end_pipeline.ipynb`](notebooks/end_to_end_pipeline.ipynb) walks through steps 3–6 interactively, using the same modules, with plots and explanations at every stage.
+
+| # | Step | Command | Code | Notebook section |
+|---|---|---|---|---|
+| 1 | Get the data | `poe fetch_data` | `src/labeling/prepare_dataset.py` | 1 · Data, 2 · Exploration |
+| 2 | Label a first batch | Label Studio + `export_annotations.py` | `src/labeling/` | — |
+| 3 | Split train / val / test | *(notebook)* | — | 3 · Splits |
+| 4 | Build the model | — | `src/minifigures_model/model.py`, `dataset.py` | 4 · Embeddings, 5 · Model |
+| 5 | Train | `poe train` | `src/minifigures_model/train_script.py`, `model_train.py`, `model_validate.py` | 6 · Training |
+| 6 | Evaluate and try it | *(notebook)* | `src/minifigures_model/metrics.py` | 7 · Evaluation, 8 · Use the model |
+| 7 | Active learning: pick the next images to label | `python src/labeling/active_learning.py` | `src/labeling/active_learning.py` | — |
+| 8 | Merge new labels, retrain — repeat 5–8 | `python src/labeling/merge_labels_train_only.py` | `src/labeling/` | — |
+| 9 | Serve the app | `poe api`, `poe app` | `src/minifigures_api/`, `src/minifigures_app/` | — |
+| 10 | Deploy to AWS | `terraform apply`, push to `main` | `terraform/`, `.github/workflows/` | — |
+
+The sections below explain each step.
+
 ### 1. Get the data
 
 ```bash
@@ -96,7 +115,9 @@ python src/labeling/export_annotations.py    # -> data/data/dataset_labeled.json
 
 Merge the result into `data/data/dataset.json` — the file maps each image tag to its list of attributes, e.g. `{"spider-man_001": ["human", "happy"]}`.
 
-### 3. Train
+### 3. Split, train and evaluate
+
+Open [`notebooks/end_to_end_pipeline.ipynb`](notebooks/end_to_end_pipeline.ipynb) and run it top to bottom: it explores the data, creates the train / validation / test split in `data/data/datasets/`, shows what the pretrained encoder already captures, trains the model with early stopping, evaluates it on the test set (per-attribute F1 and a PR curve against an untrained baseline), demonstrates predictions and similar items, and saves the model. Or train from the command line:
 
 ```bash
 poe train           # python src/minifigures_model/train_script.py --tag my_model
@@ -113,7 +134,7 @@ export AL_MODEL_VERSION=model_v1    # a new name for every round
 python src/labeling/active_learning.py
 ```
 
-Label Studio now ranks unlabeled images by how much they would help. Label the top ~30, export, merge (`src/labeling/merge_labels_train_only.py` keeps validation and test frozen), retrain — and repeat. The [`review_labels`](notebooks/review_labels.ipynb) notebook shows every labelling batch side by side.
+Label Studio now ranks unlabeled images by how much they would help. Label the top ~30, export, merge them into the training split with `python src/labeling/merge_labels_train_only.py` (validation and test stay frozen), retrain — and repeat. The [`review_labels`](notebooks/review_labels.ipynb) notebook shows every labelling batch side by side.
 
 ### 5. Serve
 
@@ -153,7 +174,7 @@ src/
 ├── minifigures_api/       # FastAPI app: prediction, similarity and data routers
 ├── minifigures_app/       # Streamlit catalogue: home, product and market pages
 └── labeling/              # dataset preparation, Label Studio export / merge, active learning
-notebooks/                 # label review notebook
+notebooks/                 # end-to-end pipeline walkthrough, label review
 terraform/                 # AWS infrastructure (app-stack module)
 tests/                     # pytest suite
 assets/                    # diagrams
