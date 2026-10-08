@@ -1,8 +1,8 @@
-"""Train the EncoderDecoder model on the labeled images.
+"""Train the EncoderDecoder model on the frozen train / validation splits.
 
-Uses the frozen splits in ``data/data/datasets/{train,val}.json`` when they exist (created by
-the end-to-end notebook and extended by active-learning merges), otherwise a seeded split of
-``data/data/dataset.json``.
+The splits in ``data/data/datasets/`` are created from ``data/data/dataset.json`` on the first
+run and reused afterwards (see ``minifigures_model.splits``), so every active-learning round is
+validated on the same images.
 
 Usage::
 
@@ -16,7 +16,6 @@ so the deploy pipeline can pick it up.
 import argparse
 import json
 import os
-import random
 import subprocess
 
 import torch
@@ -28,26 +27,11 @@ from minifigures_model.dataset import MinifiguresDataset
 from minifigures_model.model import EncoderDecoder
 from minifigures_model.model_train import train
 from minifigures_model.model_validate import validate
+from minifigures_model.splits import load_or_create_splits
 
 
-def split_dataset(
-    dataset: dict[str, list[str]], val_fraction: float, seed: int
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Shuffle the labeled tags reproducibly and split them into train and validation sets."""
-    keys = sorted(dataset)
-    random.Random(seed).shuffle(keys)
-    n_val = max(1, int(len(keys) * val_fraction))
-    return {k: dataset[k] for k in keys[n_val:]}, {k: dataset[k] for k in keys[:n_val]}
-
-
-def run_training(  # noqa: PLR0913
-    tag: str,
-    epochs: int = 40,
-    lr: float = 3e-3,
-    batch_size: int = 8,
-    patience: int = 3,
-    val_fraction: float = 0.2,
-    seed: int = 42,
+def run_training(
+    tag: str, epochs: int = 40, lr: float = 3e-3, batch_size: int = 8, patience: int = 3
 ) -> float:
     """Train with cosine learning-rate decay and early stopping; return the best val F1."""
     data_dir = get_data_folder()
@@ -57,23 +41,22 @@ def run_training(  # noqa: PLR0913
         msg = "Label at least 10 images in Label Studio before training (see the README)."
         raise SystemExit(msg)
 
-    split_dir = data_dir / "datasets"
-    if (split_dir / "train.json").exists() and (split_dir / "val.json").exists():
-        # Frozen splits from the notebook / active-learning merges: keep validation comparable
-        train_data = json.loads((split_dir / "train.json").read_text())
-        val_data = json.loads((split_dir / "val.json").read_text())
-        dataset = {**train_data, **val_data}
-    else:
-        train_data, val_data = split_dataset(dataset, val_fraction, seed)
-    print(f"Labeled: {len(dataset)}  train: {len(train_data)}  val: {len(val_data)}")
+    splits = load_or_create_splits()
+    train_data, val_data = splits["train"], splits["val"]
+    print(f"train: {len(train_data)}  val: {len(val_data)}  test (held out): {len(splits['test'])}")
 
+    # One attribute list for every split, so label vectors line up with the model outputs
+    classes = sorted({c for split in splits.values() for labels in split.values() for c in labels})
     image_dir = data_dir / "minifigures"
     train_loader = DataLoader(
-        MinifiguresDataset(image_dir, train_data), batch_size=batch_size, shuffle=True
+        MinifiguresDataset(image_dir, train_data, classes=classes),
+        batch_size=batch_size,
+        shuffle=True,
     )
-    val_loader = DataLoader(MinifiguresDataset(image_dir, val_data), batch_size=batch_size)
+    val_loader = DataLoader(
+        MinifiguresDataset(image_dir, val_data, classes=classes), batch_size=batch_size
+    )
 
-    classes = sorted({c for labels in dataset.values() for c in labels})
     model = EncoderDecoder(tag=tag, classes=classes)
     print(f"Classes: {classes}")
 

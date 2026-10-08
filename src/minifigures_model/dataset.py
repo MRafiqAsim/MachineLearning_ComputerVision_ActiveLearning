@@ -19,7 +19,13 @@ def get_transform_normalize() -> transforms.Compose:
 class MinifiguresDataset(Dataset):
     """Custom dataset for minifigures classification."""
 
-    def __init__(self, data_f: Path, dataset: dict[str, list[str]], resolution: int = 256) -> None:
+    def __init__(
+        self,
+        data_f: Path,
+        dataset: dict[str, list[str]],
+        resolution: int = 256,
+        classes: list[str] | None = None,
+    ) -> None:
         """
         Initialise the dataset.
 
@@ -31,10 +37,13 @@ class MinifiguresDataset(Dataset):
             Dictionary containing the dataset and target data
         resolution : int
             Resolution to transform the images to
+        classes : list[str] | None
+            Attribute order for the label vectors; defaults to the attributes in ``dataset``.
+            Pass the same list for every split so the vectors line up.
         """
         self.data_f = data_f
         self.keys, self.labels = zip(*dataset.items())
-        self.classes = sorted({x for y in self.labels for x in y})
+        self.classes = classes or sorted({x for y in self.labels for x in y})
         self.resolution = resolution
         self.transform_normalize = get_transform_normalize()
 

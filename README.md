@@ -46,7 +46,9 @@ A pretrained **EfficientNet-B0** encoder (frozen, ImageNet weights) turns each 2
 
 ![Active learning loop](assets/active_learning_loop.png)
 
-Each cycle trains the model, computes the loss on every labeled image to find the hardest ones, and looks up their nearest unlabeled neighbours in embedding space. Those neighbours get the highest priority in Label Studio, so each labelling round of ~30 images targets exactly what the model gets wrong. New labels are merged into the training split only, keeping validation and test sets frozen for honest comparisons.
+Each cycle trains the model, computes the loss on every labeled image to find the hardest ones, and looks up their nearest unlabeled neighbours in embedding space. Those neighbours get the highest priority in Label Studio, so each labelling round of ~30 images targets exactly what the model gets wrong.
+
+**Frozen splits are the key rule.** The labeled images are split into train / validation / test **once** (70 / 15 / 15, seeded) and saved to `data/data/datasets/`. Every later run reuses those files, and new labels from each round go into `train.json` only. Validation and test never change, so every round is measured on the same images and an F1 gain really comes from better training data.
 
 ### CI/CD
 
@@ -78,7 +80,7 @@ Every step is a small module in `src/` with a command to run it. The notebook [`
 |---|---|---|---|---|
 | 1 | Get the data | `poe fetch_data` | `src/labeling/prepare_dataset.py` | 1 · Data, 2 · Exploration |
 | 2 | Label a first batch | Label Studio + `export_annotations.py` | `src/labeling/` | — |
-| 3 | Split train / val / test | *(notebook)* | — | 3 · Splits |
+| 3 | Split train / val / test — once, then frozen | automatic on the first `poe train` or notebook run | `src/minifigures_model/splits.py` | 3 · Splits |
 | 4 | Build the model | — | `src/minifigures_model/model.py`, `dataset.py` | 4 · Embeddings, 5 · Model |
 | 5 | Train | `poe train` | `src/minifigures_model/train_script.py`, `model_train.py`, `model_validate.py` | 6 · Training |
 | 6 | Evaluate and try it | *(notebook)* | `src/minifigures_model/metrics.py` | 7 · Evaluation, 8 · Use the model |
