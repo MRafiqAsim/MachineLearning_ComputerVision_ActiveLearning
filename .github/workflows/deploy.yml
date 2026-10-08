@@ -1,0 +1,72 @@
+name: Deploy
+
+# Builds the app image, pushes it to ECR and restarts the containers on EC2.
+# Runs only when the repository variable DEPLOY_ENABLED is "true". Configure:
+#   variables: AWS_REGION, ECR_REGISTRY (<account>.dkr.ecr.<region>.amazonaws.com),
+#              ECR_REPOSITORY, EC2_HOST, MODELS_BUCKET
+#   secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, EC2_SSH_KEY
+# (Terraform outputs the values for the variables.)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build, push and deploy
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to ECR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.ECR_REGISTRY }}
+          username: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          password: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+
+      - name: Build and push the app image
+        run: |
+          docker build --target app -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Prepare SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan "${{ vars.EC2_HOST }}" >> ~/.ssh/known_hosts
+          echo "$SSH_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+      - name: Restart the containers on EC2
+        run: |
+          ssh -i private_key.pem "ec2-user@${{ vars.EC2_HOST }}" \
+            IMAGE="$IMAGE" REGISTRY="${{ vars.ECR_REGISTRY }}" REGION="${{ vars.AWS_REGION }}" \
+            BUCKET="${{ vars.MODELS_BUCKET }}" bash -s << 'EOF'
+            set -e
+            aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+            docker pull "$IMAGE"
+            docker stop api app 2>/dev/null || true
+            docker system prune -af
+            docker network create app-net 2>/dev/null || true
+
+            # Trained models and the image catalogue live in S3
+            aws s3 cp "s3://$BUCKET/models/" models/ --recursive
+            aws s3 cp "s3://$BUCKET/data/" data/ --recursive
+
+            docker run -d --rm --network app-net --name api \
+              -v "$(pwd)/models:/workspaces/minifigures-app/data/models" \
+              -v "$(pwd)/data:/workspaces/minifigures-app/data/data" \
+              -p 8000:8000 "$IMAGE" api
+            docker run -d --rm --network app-net --name app -p 80:8500 "$IMAGE" app
+          EOF
